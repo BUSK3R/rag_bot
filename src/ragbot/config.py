@@ -69,6 +69,9 @@ class Settings(BaseSettings):
     llm_temperature: float = 0.1
     llm_max_tokens: int = 512
     llm_timeout_s: float = 120.0
+    # 검색·생성 전에 구어체 질문을 공문 용어로 재작성하는 LLM 전처리 단계.
+    # LLM 호출이 한 번 늘어나는 대신(약 1초) 구어체 질문의 오판을 막는다.
+    rewrite_query: bool = True
 
     # --- 서버 ---
     # 컨테이너에서는 패키지가 site-packages 에 설치되므로 REPO_ROOT 추정이 빗나간다.

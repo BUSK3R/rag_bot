@@ -133,7 +133,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         검색(임베딩+FAISS)은 스트림을 열기 전에 끝내므로 근거 목록이 즉시 뜬다.
         """
         pipeline = _pipeline()
-        hits, usable = pipeline.ground(request.query, request.top_k)
+        # 검색과 생성이 같은 질문을 쓰도록 재작성을 여기서 한 번만 한다 (ground 의 규약).
+        effective = pipeline.rewrite(request.query)
+        hits, usable = pipeline.ground(effective, request.top_k)
 
         def frames() -> Iterator[str]:
             yield _sse(
@@ -144,7 +146,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 yield _sse({"type": "done", "grounded": False})
                 return
             try:
-                for piece in pipeline.stream(request.query, usable):
+                for piece in pipeline.stream(effective, usable):
                     yield _sse({"type": "token", "text": piece})
             except LLMError as exc:
                 yield _sse({"type": "error", "message": str(exc)})

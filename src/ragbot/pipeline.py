@@ -16,9 +16,15 @@ from pathlib import Path
 from .chunking import chunk_pdf
 from .config import Settings
 from .embedder import Embedder, SupportsEncode
-from .llm import LLMClient, OllamaClient
+from .llm import LLMClient, LLMError, OllamaClient
 from .models import Answer, Chunk, Hit
-from .prompt import NO_EVIDENCE_ANSWER, SYSTEM_PROMPT, build_user_prompt
+from .prompt import (
+    NO_EVIDENCE_ANSWER,
+    REWRITE_SYSTEM,
+    SYSTEM_PROMPT,
+    build_rewrite_prompt,
+    build_user_prompt,
+)
 from .retriever import HybridSearcher
 from .store import IndexMeta, VectorStore
 
@@ -85,12 +91,14 @@ class RagPipeline:
         top_k: int,
         min_score: float,
         max_context_chars: int = 2400,
+        rewrite_query: bool = False,
     ) -> None:
         self._searcher = searcher
         self._llm = llm
         self._top_k = top_k
         self._min_score = min_score
         self._max_context_chars = max_context_chars
+        self._rewrite_query = rewrite_query
 
     @classmethod
     def from_settings(cls, settings: Settings) -> RagPipeline:
@@ -113,6 +121,7 @@ class RagPipeline:
             top_k=settings.top_k,
             min_score=settings.min_score,
             max_context_chars=settings.max_context_chars,
+            rewrite_query=settings.rewrite_query,
         )
 
     @property
@@ -148,20 +157,46 @@ class RagPipeline:
             used += cost
         return tuple(picked)
 
+    def rewrite(self, query: str) -> str:
+        """구어체 질문을 공문 용어로 정규화한다. 실패하면 원문을 그대로 쓴다.
+
+        실측: "청년끼고 지원되나"는 2.4B 가 오판(지원 불가로 단정), 8B 가 회피했지만,
+        "공동창업"으로 바꿔 물으면 둘 다 정답이었다. 병목이 모델 체급이 아니라 용어
+        매핑이므로 검색·생성 전에 한 번 옮긴다. 재작성 결과가 원문의 3배를 넘거나
+        여러 줄이면 모델이 설명을 붙인 것으로 보고 버린다.
+        """
+        if not self._rewrite_query:
+            return query
+        try:
+            candidate = self._llm.complete(REWRITE_SYSTEM, build_rewrite_prompt(query))
+        except LLMError:
+            return query
+        candidate = candidate.strip().strip('"').strip()
+        # 퓨샷 패턴을 그대로 이어 써서 "격식체:" 라벨까지 출력하는 경우가 실측에서 나왔다.
+        candidate = candidate.removeprefix("격식체:").strip()
+        if not candidate or "\n" in candidate or len(candidate) > max(len(query) * 3, 120):
+            return query
+        return candidate
+
     def ground(
         self, query: str, top_k: int | None = None
     ) -> tuple[tuple[Hit, ...], tuple[Hit, ...]]:
-        """(검색된 전체, 근거로 실제 쓸 것). 스트리밍 API 가 근거를 먼저 내보낼 수 있게 분리."""
+        """(검색된 전체, 근거로 실제 쓸 것). 스트리밍 API 가 근거를 먼저 내보낼 수 있게 분리.
+
+        재작성은 하지 않는다 — 호출자가 rewrite() 결과를 넘겨야 검색과 생성이 같은
+        질문을 쓴다는 것이 코드에 드러난다(api 의 스트리밍 경로가 이 규약에 의존한다).
+        """
         hits = tuple(self.retrieve(query, top_k))
         return hits, self._select(hits)
 
     def ask(self, query: str, top_k: int | None = None) -> Answer:
-        hits, usable = self.ground(query, top_k)
+        effective = self.rewrite(query)
+        hits, usable = self.ground(effective, top_k)
         if not usable:
             # 근거가 약하면 LLM 을 아예 부르지 않는다. 환각을 사후에 걸러내는 것보다
             # 생성 경로에 진입하지 않는 편이 확실하고 응답도 빠르다.
             return Answer(query=query, text=NO_EVIDENCE_ANSWER, hits=hits, grounded=False)
-        text = self._llm.complete(SYSTEM_PROMPT, build_user_prompt(query, usable))
+        text = self._llm.complete(SYSTEM_PROMPT, build_user_prompt(effective, usable))
         return Answer(query=query, text=text, hits=usable, grounded=True)
 
     def stream(self, query: str, usable: Sequence[Hit]) -> Iterator[str]:
