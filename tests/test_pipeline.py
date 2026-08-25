@@ -110,9 +110,7 @@ def test_재작성이_켜지면_검색과_생성_모두_격식체_질문을_쓴�
     store = VectorStore.load(settings.index_dir, expect_model=settings.embed_model)
     searcher = HybridSearcher(store, embedder, k=settings.top_k)
     llm = RewritingLLM()
-    pipeline = RagPipeline(
-        searcher, llm, top_k=settings.top_k, min_score=0.0, rewrite_query=True
-    )
+    pipeline = RagPipeline(searcher, llm, top_k=settings.top_k, min_score=0.0, rewrite_query=True)
     pipeline.ask("나 64살인데 지원되나 청년끼고")
     assert len(llm.calls) == 2  # 재작성 1회 + 생성 1회
     rewrite_call, answer_call = llm.calls
