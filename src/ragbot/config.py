@@ -66,7 +66,9 @@ class Settings(BaseSettings):
     # 정식 제품화 시점에는 Apache 2.0 인 Kanana 로 되돌릴 것:
     #   RAGBOT_LLM_MODEL=hf.co/DevQuasar/kakaocorp.kanana-1.5-8b-instruct-2505-GGUF:Q4_K_M
     llm_model: str = "exaone3.5:2.4b"
-    llm_temperature: float = 0.1
+    # 0.1 에서는 "64세+청년 공동창업" 자격 질문이 4회 중 1회 회피로 흔들렸다(실측).
+    # 0.0(탐욕 디코딩)에서는 3/3 정답. 사실 질의응답에 무작위성을 둘 이유가 없다.
+    llm_temperature: float = 0.0
     llm_max_tokens: int = 512
     llm_timeout_s: float = 120.0
     # 검색·생성 전에 구어체 질문을 공문 용어로 재작성하는 LLM 전처리 단계.
