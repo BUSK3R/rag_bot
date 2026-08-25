@@ -55,3 +55,19 @@ def test_실제_공문을_청크로_만든다(sample_pdf: Path):
     assert all(c.source == sample_pdf.name for c in chunks)
     assert len({c.id for c in chunks}) == len(chunks)  # id 는 유일해야 한다
     assert any("청년창업사관학교" in c.text for c in chunks)
+
+
+def test_전화번호를_페이지_번호로_오인하지_않는다():
+    # "-204-" 를 페이지 표기로 삼켜 번호가 044/7950 으로 찢어지던 회귀.
+    정제 = clean_text("과장 이민숙(044-204-7950) 담당자 백승표(044-204-7951)")
+    assert "044-204-7950" in 정제
+    assert "044-204-7951" in 정제
+
+
+def test_날짜_형식도_보존된다():
+    assert "2025-01-22" in clean_text("보도시점 2025-01-22 조간")
+
+
+def test_페이지_표기는_여전히_제거된다():
+    assert "- 2 -" not in clean_text("출생자 포함) - 2 - 올해 청년창업사관학교는")
+    assert "- 1 -" not in clean_text("- 1 -\n보도자료")

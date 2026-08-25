@@ -31,7 +31,9 @@ _SEPARATORS = ["\n\n", "\n", ". ", " ", ""]
 _BULLETS = "◦□▪‣※●○·"
 _CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮➀➁➂➃➄➅➆➇➈➉"
 
-_PAGE_MARKER = re.compile(r"-\s*\d+\s*-")
+# 페이지 표기 "- 2 -". 앞뒤 공백을 요구하지 않으면 044-204-7950 의 "-204-" 나
+# 2025-01-22 의 "-01-" 까지 삼켜 숫자를 찢어놓는다(실제로 전화번호가 깨졌다).
+_PAGE_MARKER = re.compile(r"(?:^|(?<=\s))-\s*\d{1,3}\s*-(?=\s|$)", re.MULTILINE)
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 _BEFORE_BULLET = re.compile(rf"(?<!\n)(?=[{_BULLETS}{_CIRCLED}])")
 _AFTER_BULLET = re.compile(rf"(?<=[{_BULLETS}])(?=\S)")
