@@ -1,0 +1,50 @@
+[project]
+name = "ragbot"
+version = "0.1.0"
+description = "공문서 기반 로컬 RAG 챗봇 (KURE-v1 + FAISS + Ollama)"
+requires-python = ">=3.11"
+dependencies = [
+    "pypdf>=6.0",
+    "numpy>=1.26,<3",
+    "faiss-cpu>=1.8",
+    # 검색 계층에만 LangChain 을 쓴다. 공문은 "39세", "1억원", "2월 12일(수) 16시" 같은
+    # 정확한 토큰으로 조건이 박혀 있어 밀집 임베딩만으로는 뭉개진다. BM25 와 섞는
+    # EnsembleRetriever 가 여기서 실제로 효과가 크다. langgraph/에이전트/트레이싱은 쓰지 않는다.
+    "langchain-core>=1.0",
+    "langchain-text-splitters>=1.0",
+    "langchain-classic>=1.0",      # EnsembleRetriever
+    "langchain-community>=0.4",    # BM25Retriever
+    "rank-bm25>=0.2.2",
+    "sentence-transformers>=3.0",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "httpx>=0.27",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[project.scripts]
+ragbot = "ragbot.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ragbot"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+# legacy/ 는 재작성 전 원본 보관용이라 문법 오류가 있는 파일이 섞여 있다.
+extend-exclude = ["legacy", ".venv", ".venv-test"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>공문 RAG 챗봇</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #fff; --text: #1b1f24; --muted: #6b7280;
+    --line: #e3e6ea; --accent: #2f6feb; --warn: #b45309; --warn-bg: #fef6e7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171a; --panel: #1c2024; --text: #e8eaed; --muted: #9aa3ad;
+      --line: #2c3238; --accent: #6ea0ff; --warn: #f0b45f; --warn-bg: #2a2317;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.6 system-ui, "Segoe UI", "Malgun Gothic", sans-serif; }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 24px 16px 96px; }
+  header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 20px; }
+  h1 { font-size: 18px; margin: 0; }
+  #status { font-size: 12px; color: var(--muted); }
+  .msg { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    padding: 14px 16px; margin-bottom: 12px; }
+  .msg.q { background: transparent; border-style: dashed; color: var(--muted); }
+  .msg.ungrounded { background: var(--warn-bg); border-color: var(--warn); color: var(--warn); }
+  .answer { white-space: pre-wrap; }
+  .sources { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; }
+  .sources h3 { font-size: 12px; color: var(--muted); margin: 0 0 8px; font-weight: 600; }
+  .src { font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  .src b { color: var(--text); font-weight: 600; }
+  .src p { margin: 2px 0 0; opacity: .8; }
+  .ttft { float: right; font-size: 11px; color: var(--muted); font-weight: 400; }
+  .cursor::after { content: '▍'; opacity: .5; animation: blink 1s steps(2) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  form { position: fixed; left: 0; right: 0; bottom: 0; background: var(--bg);
+    border-top: 1px solid var(--line); padding: 12px 16px; }
+  .row { max-width: 760px; margin: 0 auto; display: flex; gap: 8px; }
+  textarea { flex: 1; resize: none; height: 46px; padding: 12px; border-radius: 10px;
+    border: 1px solid var(--line); background: var(--panel); color: var(--text); font: inherit; }
+  button { padding: 0 20px; border: 0; border-radius: 10px; background: var(--accent);
+    color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header><h1>공문 RAG 챗봇</h1><span id="status">상태 확인 중…</span></header>
+  <div id="log"></div>
+</div>
+<form id="form">
+  <div class="row">
+    <textarea id="q" placeholder="예) 청년창업사관학교 지원 대상과 나이 조건은?" autofocus></textarea>
+    <button id="send" type="submit">질문</button>
+  </div>
+</form>
+<script>
+const log = document.getElementById('log');
+const form = document.getElementById('form');
+const input = document.getElementById('q');
+const send = document.getElementById('send');
+
+function el(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined) n.textContent = text;
+  return n;
+}
+
+const SEPARATOR = '\n\n';
+
+function renderSources(box, sources) {
+  if (!sources || !sources.length) return;
+  const wrap = el('div', 'sources');
+  const head = el('h3', null, '근거');
+  head.appendChild(el('span', 'ttft', ''));
+  wrap.appendChild(head);
+  for (const src of sources) {
+    const item = el('div', 'src');
+    item.appendChild(el('b', null,
+      `[${src.index}] ${src.source} ${src.page}페이지 · 유사도 ${src.score.toFixed(3)}`));
+    item.appendChild(el('p', null, src.excerpt));
+    wrap.appendChild(item);
+  }
+  box.appendChild(wrap);
+}
+
+async function refreshStatus() {
+  const badge = document.getElementById('status');
+  try {
+    const r = await fetch('/api/health');
+    const h = await r.json();
+    badge.textContent = h.status === 'ok'
+      ? `청크 ${h.chunks}개 · LLM ${h.llm_ready ? '준비됨' : '미준비'}`
+      : `이상: ${h.detail || 'unknown'}`;
+  } catch { badge.textContent = '서버에 연결할 수 없습니다'; }
+}
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const query = input.value.trim();
+  if (!query) return;
+  log.appendChild(el('div', 'msg q', query));
+  input.value = '';
+  send.disabled = true;
+
+  // 답변 상자를 먼저 띄우고 그 안으로 글자를 흘려 넣는다.
+  const box = el('div', 'msg');
+  const answer = el('div', 'answer cursor');
+  box.appendChild(answer);
+  log.appendChild(box);
+  box.scrollIntoView({ behavior: 'smooth', block: 'end' });
+
+  const started = performance.now();
+  let firstToken = null;
+
+  const handle = (ev) => {
+    if (ev.type === 'sources') {
+      renderSources(box, ev.sources);
+    } else if (ev.type === 'token') {
+      if (firstToken === null) {
+        firstToken = performance.now() - started;
+        const badge = box.querySelector('.ttft');
+        if (badge) badge.textContent = `첫 글자 ${(firstToken / 1000).toFixed(1)}초`;
+      }
+      answer.textContent += ev.text;
+      box.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    } else if (ev.type === 'done') {
+      if (!ev.grounded) box.classList.add('ungrounded');
+    } else if (ev.type === 'error') {
+      box.classList.add('ungrounded');
+      answer.textContent += `\n\n[오류] ${ev.message}`;
+    }
+  };
+
+  try {
+    const response = await fetch('/api/ask/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query })
+    });
+    if (!response.ok) {
+      box.classList.add('ungrounded');
+      answer.textContent = `오류 ${response.status}: ${await response.text()}`;
+    } else {
+      // SSE 프레임은 빈 줄로 구분된다. 네트워크 조각이 프레임 경계와 맞지 않으므로
+      // 버퍼에 모아두고 완성된 프레임만 꺼내 쓴다.
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let cut;
+        while ((cut = buffer.indexOf(SEPARATOR)) !== -1) {
+          const frame = buffer.slice(0, cut);
+          buffer = buffer.slice(cut + SEPARATOR.length);
+          if (frame.startsWith('data: ')) handle(JSON.parse(frame.slice(6)));
+        }
+      }
+    }
+  } catch (err) {
+    box.classList.add('ungrounded');
+    answer.textContent += ' [요청 실패: ' + err + ']';
+  } finally {
+    answer.classList.remove('cursor');
+    send.disabled = false;
+    input.focus();
+  }
+});
+
+input.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); form.requestSubmit(); }
+});
+
+refreshStatus();
+</script>
+</body>
+</html>

@@ -1,0 +1,50 @@
+name: ragbot
+
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: ghcr.io/busk3r/rag_bot:latest
+    ports:
+      - "8000:8000"
+    environment:
+      # 기본값은 호스트에서 도는 Ollama. Windows/macOS 의 Docker Desktop 에서는
+      # GPU 패스스루가 까다로워 이쪽이 훨씬 덜 아프다.
+      # 컨테이너까지 다 띄우려면 .env 에서 http://ollama:11434 로 바꾸고
+      # `docker compose --profile ollama up` 으로 실행한다.
+      RAGBOT_OLLAMA_BASE_URL: ${RAGBOT_OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      RAGBOT_LLM_MODEL: ${RAGBOT_LLM_MODEL:-hf.co/DevQuasar/kakaocorp.kanana-1.5-8b-instruct-2505-GGUF:Q4_K_M}
+      RAGBOT_TOP_K: ${RAGBOT_TOP_K:-4}
+      RAGBOT_MIN_SCORE: ${RAGBOT_MIN_SCORE:-0.30}
+    extra_hosts:
+      # 리눅스 호스트에서도 host.docker.internal 이 먹게 한다.
+      - "host.docker.internal:host-gateway"
+    volumes:
+      # PDF 원본과 생성된 인덱스. 컨테이너를 지워도 인덱스는 남는다.
+      - ../data:/data
+      # 임베딩 모델(약 2.2GB) 캐시. 없으면 컨테이너를 띄울 때마다 다시 받는다.
+      - hf-cache:/cache
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["ollama"]
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama:/root/.ollama
+    restart: unless-stopped
+    # NVIDIA Container Toolkit 이 설치돼 있어야 한다. 없으면 이 서비스를 띄우지 말고
+    # 호스트 Ollama 를 그대로 쓰면 된다(기본 프로필).
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  hf-cache:
+  ollama:

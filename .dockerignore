@@ -1,0 +1,13 @@
+.git
+.github
+.venv
+.venv-test
+legacy
+tests
+data/index
+data/faiss_index
+**/__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+.env
