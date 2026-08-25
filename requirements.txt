@@ -1,0 +1,32 @@
+# 이 파일 하나로 전부 설치됩니다:
+#
+#   uv pip install -r requirements.txt
+#
+# (uv 가 없으면:  pip install -r requirements.txt)
+
+# ragbot 패키지 자신 (터미널에서 ragbot 명령을 쓸 수 있게 해줍니다)
+-e .
+
+# --- 문서 → 벡터 ---
+pypdf>=6.0                    # PDF 텍스트 추출
+numpy>=1.26,<3
+faiss-cpu>=1.8                # 벡터 검색 인덱스
+sentence-transformers>=3.0    # KURE-v1 임베딩 (torch 를 함께 설치합니다)
+
+# --- 검색 (LangChain 은 이 용도로만 씁니다) ---
+langchain-core>=1.0
+langchain-text-splitters>=1.0
+langchain-classic>=1.0        # EnsembleRetriever (BM25+임베딩 융합)
+langchain-community>=0.4      # BM25Retriever
+rank-bm25>=0.2.2
+
+# --- 서버 ---
+fastapi>=0.115
+uvicorn[standard]>=0.30
+httpx>=0.27                   # Ollama HTTP 클라이언트
+pydantic>=2.7
+pydantic-settings>=2.3
+
+# --- 개발 도구 ---
+pytest>=8
+ruff>=0.6
