@@ -47,7 +47,10 @@ class Settings(BaseSettings):
     # --- 검색 ---
     top_k: int = Field(default=4, ge=1, le=20)
     # 코사인 유사도 하한. 이보다 낮은 근거만 나오면 LLM 을 부르지 않고 모른다고 답한다.
-    min_score: float = Field(default=0.30, ge=0.0, le=1.0)
+    # 실측(2026-08-25, KURE-v1): 유관 질문은 0.55~0.75, 무관 질문("비트코인 시세",
+    # "넌뭐야")은 0.25~0.32 로 갈린다. 0.30 은 무관 질문을 아슬아슬하게 통과시켜
+    # LLM 생성 비용을 낭비했다. 0.45 가 관측 분포의 한가운데다.
+    min_score: float = Field(default=0.45, ge=0.0, le=1.0)
     # 프롬프트에 실을 근거의 총 글자수 상한. 응답 지연의 대부분은 생성이 아니라
     # 긴 프롬프트를 읽는 prefill 이라, top_k 보다 이쪽이 속도에 직접적이다.
     # top_k 개를 다 채우기 전에 예산이 차면 거기서 끊는다.
@@ -58,7 +61,11 @@ class Settings(BaseSettings):
 
     # --- LLM (Ollama) ---
     ollama_base_url: str = "http://localhost:11434"
-    llm_model: str = "hf.co/DevQuasar/kakaocorp.kanana-1.5-8b-instruct-2505-GGUF:Q4_K_M"
+    # 시제품 단계라 EXAONE(NC 라이선스, 연구 전용)을 기본값으로 쓴다. 1.7GB 라
+    # 6GB VRAM 에 100% 적재되어 TTFT 가 Kanana 8B(75% 적재) 대비 4배 빠르다.
+    # 정식 제품화 시점에는 Apache 2.0 인 Kanana 로 되돌릴 것:
+    #   RAGBOT_LLM_MODEL=hf.co/DevQuasar/kakaocorp.kanana-1.5-8b-instruct-2505-GGUF:Q4_K_M
+    llm_model: str = "exaone3.5:2.4b"
     llm_temperature: float = 0.1
     llm_max_tokens: int = 512
     llm_timeout_s: float = 120.0
