@@ -1,0 +1,192 @@
+import os
+import torch
+from typing import List, Dict, Any, Tuple
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_community.vectorstores import FAISS
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, pipeline
+
+DEFAULT_INDEX_DIR = os.path.join(os.path.dirname(__file__), "data", "faiss_index")
+DEFAULT_EMBEDDING_MODEL = "nlpai-lab/KURE-v1"
+DEFAULT_LLM_MODEL = "LGAI-EXAONE/EXAONE-3.5-2.4B-Instruct"
+
+class PolicyRAG:
+    def __init__(
+        self,
+        index_dir: str = DEFAULT_INDEX_DIR,
+        embedding_model_name: str = DEFAULT_EMBEDDING_MODEL,
+        llm_model_name: str = DEFAULT_LLM_MODEL,
+        device: str = "cuda" if torch.cuda.is_available() else "cpu"
+    ):
+        self.index_dir = index_dir
+        self.embedding_model_name = embedding_model_name
+        self.llm_model_name = llm_model_name
+        self.device = device
+        
+        self.embeddings = None
+        self.vectorstore = None
+        self.tokenizer = None
+        self.model = None
+        self.generator = None
+
+    def load_vectorstore(self):
+        print(f"[*] Loading embedding model ({self.embedding_model_name})...")
+        self.embeddings = HuggingFaceEmbeddings(
+            model_name=self.embedding_model_name,
+            model_kwargs={"device": self.device},
+            encode_kwargs={"normalize_embeddings": True}
+        )
+        print(f"[*] Loading FAISS index from {self.index_dir}...")
+        self.vectorstore = FAISS.load_local(
+            self.index_dir,
+            self.embeddings,
+            allow_dangerous_deserialization=True
+        )
+        print("[+] FAISS Vectorstore successfully loaded.")
+
+    def load_llm(self):
+        print(f"[*] Loading EXAONE LLM: {self.llm_model_name}...")
+        
+        # [PATCH] transformers >= 5.x 에서 EXAONE-3.5가 input_embeds kwargs를 던질 때 발생하는 오류(TypeError) 방지
+        try:
+            import transformers.modeling_attn_mask_utils as mask_utils
+            if hasattr(mask_utils, "create_causal_mask"):
+                _orig_mask = mask_utils.create_causal_mask
+                def _patched_mask(*args, **kwargs):
+                    kwargs.pop("input_embeds", None)
+                    return _orig_mask(*args, **kwargs)
+                mask_utils.create_causal_mask = _patched_mask
+        except ImportError:
+            pass
+
+        # 3060 Laptop 6GB VRAM에 맞춘 4-bit 양자화 설정
+        quant_config = None
+        if self.device == "cuda":
+            try:
+                quant_config = BitsAndBytesConfig(
+                modeling_attn_mask_utils.create_causal_mask = _patched_mask
+        except ImportError:
+            pass
+
+        print("[*] Using 4-bit quantization (BitsAndBytes NF4) for VRAM optimization.")
+        from transformers import BitsAndBytesConfig
+        bnb_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_use_double_quant=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=torch.float16
+        )
+
+        model_kwargs = {
+            "trust_remote_code": True,
+            "device_map": "auto" if self.device == "cuda" else None,
+            "quantization_config": bnb_config
+        }
+
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            self.llm_model_name,
+            trust_remote_code=True
+        )
+
+        self.model = AutoModelForCausalLM.from_pretrained(
+            self.llm_model_name,
+            **model_kwargs
+        )
+        self.model.eval()
+
+        # Just in case modeling_exaone was already loaded and cached from a previous import in sys.modules,
+        # we dynamically patch the module's local reference too!
+        import sys
+        for mod_name, mod in sys.modules.items():
+            if 'modeling_exaone' in mod_name and hasattr(mod, 'create_causal_mask'):
+                _orig = mod.create_causal_mask
+                def _local_patch(*args, _orig=_orig, **kwargs):
+                    kwargs.pop("input_embeds", None)
+                    return _orig(*args, **kwargs)
+                mod.create_causal_mask = _local_patch
+
+        self.generator = pipeline(
+            "text-generation",
+            model=self.model,
+            tokenizer=self.tokenizer,
+            max_new_tokens=512,
+            temperature=0.1,
+            top_p=0.9,
+            repetition_penalty=1.1
+        )
+
+        print("[+] EXAONE LLM loaded successfully.")
+
+    def retrieve(self, query: str, k: int = 3) -> List[Tuple[Any, float]]:
+        if not self.vectorstore:
+            self.load_vectorstore()
+        # similarity_search_with_score returns (doc, distance)
+        return self.vectorstore.similarity_search_with_score(query, k=k)
+
+    def generate_answer(self, query: str, k: int = 3) -> Dict[str, Any]:
+        if not self.vectorstore:
+            self.load_vectorstore()
+        if not self.generator:
+            self.load_llm()
+
+        # 1. 문서 검색
+        docs_with_scores = self.retrieve(query, k=k)
+        
+        # 2. 컨텍스트 구성
+        context_blocks = []
+        for idx, (doc, score) in enumerate(docs_with_scores, 1):
+            page_num = doc.metadata.get("page", 0) + 1
+            source_file = os.path.basename(doc.metadata.get("source", "PDF"))
+            context_blocks.append(f"[{idx}] (출처: {source_file}, {page_num}페이지)\n{doc.page_content.strip()}")
+        
+        context_str = "\n\n".join(context_blocks)
+
+        # 3. EXAONE 3.5 프롬프트 템플릿 구성
+        system_prompt = (
+            "당신은 공문서 기반 정부 지원 혜택 및 창업 정책 안내 전문 AI 어시스턴트입니다.\n"
+            "제공된 [참고 공문 내용]만을 엄격히 바탕으로 사용자의 질문에 정확하고 구체적으로 답변하세요.\n"
+            "공문에 명시되지 않은 내용은 지어내거나 추측하지 말고 '공문에 명시되어 있지 않습니다'라고 명확히 밝히세요."
+        )
+
+        user_prompt = (
+            f"[참고 공문 내용]\n{context_str}\n\n"
+            f"사용자 질문: {query}\n"
+            f"위 공문 내용을 바탕으로 핵심 조건을 포함해 조리있게 답변해 주세요."
+        )
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
+
+        if hasattr(self.tokenizer, "apply_chat_template"):
+            full_prompt = self.tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True
+            )
+        else:
+            full_prompt = (
+                f"[|system|]\n{system_prompt}\n"
+                f"[|user|]\n{user_prompt}\n"
+                f"[|assistant|]\n"
+            )
+
+        # 4. LLM 추론
+        outputs = self.generator(
+            full_prompt,
+            return_full_text=False
+        )
+        answer = outputs[0]["generated_text"].strip()
+
+        return {
+            "query": query,
+            "answer": answer,
+            "retrieved_docs": [
+                {
+                    "content": doc.page_content,
+                    "metadata": doc.metadata,
+                    "score": float(score)
+                }
+                for doc, score in docs_with_scores
+            ]
+        }

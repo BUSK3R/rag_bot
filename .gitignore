@@ -216,3 +216,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# --- ragbot ---
+.venv-test/
+data/index/
+data/faiss_index/
