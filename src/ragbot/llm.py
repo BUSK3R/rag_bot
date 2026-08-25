@@ -69,7 +69,13 @@ class OllamaClient:
                 {"role": "user", "content": user},
             ],
             "stream": stream,
-            "options": {"temperature": self.temperature, "num_predict": self.max_tokens},
+            "options": {
+                "temperature": self.temperature,
+                "num_predict": self.max_tokens,
+                # DevQuasar 의 Kanana GGUF 는 stop 토큰이 템플릿에 없어 Llama 계
+                # 종료 토큰이 본문 텍스트로 샌다("...입니다.<|eot_id|>"). 우리가 박는다.
+                "stop": ["<|eot_id|>", "<|end_of_text|>", "<|im_end|>"],
+            },
         }
 
     def _fail(self, exc: Exception) -> LLMError:

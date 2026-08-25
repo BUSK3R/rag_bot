@@ -34,8 +34,13 @@ def build_context(hits: Sequence[Hit]) -> str:
 
 
 def build_user_prompt(query: str, hits: Sequence[Hit]) -> str:
+    # 형식 지시는 프롬프트 말미에 예시와 함께 둔다. 소형 모델(8B 4bit)은 시스템
+    # 프롬프트에만 적은 "[n] 표기" 지시를 실측에서 5/5 무시했다 — 질문 바로 뒤에
+    # 구체적 예시로 반복해야 따른다.
     return (
         f"[참고 공문]\n{build_context(hits)}\n\n"
         f"[질문]\n{query}\n\n"
-        "위 참고 공문만 근거로, 핵심 조건을 빠뜨리지 말고 답하세요."
+        "위 참고 공문만 근거로, 핵심 조건을 빠뜨리지 말고 답하세요. "
+        "각 문장 끝에 근거가 된 공문 번호를 대괄호로 표기하세요. "
+        "예: 지원 대상은 39세 이하입니다 [1]."
     )
